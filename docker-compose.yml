@@ -36,6 +36,16 @@ services:
     volumes:
       - plane_minio:/data
     restart: unless-stopped
+    networks:
+      - default
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-uploads.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/uploads`)"
+      - "traefik.http.routers.plane-uploads.entrypoints=https"
+      - "traefik.http.routers.plane-uploads.tls=true"
+      - "traefik.http.routers.plane-uploads.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-uploads.loadbalancer.server.port=9000"
 
   api:
     image: makeplane/plane-api:latest
@@ -47,6 +57,36 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    networks:
+      - default
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-api.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.plane-api.entrypoints=https"
+      - "traefik.http.routers.plane-api.tls=true"
+      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
+
+  # Realtime / websockets (recommended for Plane)
+  live:
+    image: makeplane/plane-live:latest
+    depends_on:
+      - api
+      - redis
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - default
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-ws.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.plane-ws.entrypoints=https"
+      - "traefik.http.routers.plane-ws.tls=true"
+      - "traefik.http.routers.plane-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-ws.loadbalancer.server.port=3000"
 
   worker:
     image: makeplane/plane-worker:latest
@@ -68,26 +108,35 @@ services:
     image: makeplane/plane-web:latest
     depends_on:
       - api
+      - live
     env_file:
       - .env
     restart: unless-stopped
+    networks:
+      - default
+      - coolify
+    labels:
+      - "traefik.enable=true"
 
-  proxy:
-    image: caddy:2
-    depends_on:
-      - web
-      - api
-      - minio
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - plane_caddy_data:/data
-      - plane_caddy_config:/config
-    restart: unless-stopped
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.plane-http.rule=Host(`${PLANE_DOMAIN}`)"
+      - "traefik.http.routers.plane-http.entrypoints=http"
+      - "traefik.http.routers.plane-http.middlewares=plane-https-redirect"
+      - "traefik.http.middlewares.plane-https-redirect.redirectscheme.scheme=https"
+
+      # Main HTTPS router
+      - "traefik.http.routers.plane.rule=Host(`${PLANE_DOMAIN}`)"
+      - "traefik.http.routers.plane.entrypoints=https"
+      - "traefik.http.routers.plane.tls=true"
+      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane.loadbalancer.server.port=3000"
 
 volumes:
   plane_db:
   plane_redis:
   plane_rabbitmq:
   plane_minio:
-  plane_caddy_data:
-  plane_caddy_config:
+
+networks:
+  coolify:
+    external: true
