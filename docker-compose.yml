@@ -36,14 +36,6 @@ services:
     volumes:
       - plane_minio:/data
     restart: unless-stopped
-    networks: [default, coolify]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.plane-uploads.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/uploads`)"
-      - "traefik.http.routers.plane-uploads.entrypoints=https"
-      - "traefik.http.routers.plane-uploads.tls=true"
-      - "traefik.http.routers.plane-uploads.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane-uploads.loadbalancer.server.port=9000"
 
   api:
     image: artifacts.plane.so/makeplane/plane-backend:${APP_RELEASE:-v1.0.0}
@@ -51,14 +43,6 @@ services:
     depends_on: [db, redis, rabbitmq, minio]
     env_file: [.env]
     restart: unless-stopped
-    networks: [default, coolify]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.plane-api.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.plane-api.entrypoints=https"
-      - "traefik.http.routers.plane-api.tls=true"
-      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
 
   worker:
     image: artifacts.plane.so/makeplane/plane-backend:${APP_RELEASE:-v1.0.0}
@@ -79,32 +63,42 @@ services:
     depends_on: [api, redis]
     env_file: [.env]
     restart: unless-stopped
-    networks: [default, coolify]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.plane-ws.rule=Host(`${PLANE_DOMAIN}`) && PathPrefix(`/ws`)"
-      - "traefik.http.routers.plane-ws.entrypoints=https"
-      - "traefik.http.routers.plane-ws.tls=true"
-      - "traefik.http.routers.plane-ws.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane-ws.loadbalancer.server.port=3000"
 
   web:
     image: artifacts.plane.so/makeplane/plane-frontend:${APP_RELEASE:-v1.0.0}
     depends_on: [api, live]
     env_file: [.env]
     restart: unless-stopped
-    networks: [default, coolify]
+
+  # ✅ Only this one gets exposed to the internet via Traefik
+  plane-proxy:
+    image: artifacts.plane.so/makeplane/plane-proxy:${APP_RELEASE:-v1.0.0}
+    depends_on: [web, api, live]
+    environment:
+      - SERVICE_URL_PLANE
+      - "APP_DOMAIN=${SERVICE_URL_PLANE}"
+      - "SITE_ADDRESS=:80"
+      - "FILE_SIZE_LIMIT=${FILE_SIZE_LIMIT:-5242880}"
+      - "BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-uploads}"
+    restart: unless-stopped
+    networks:
+      - default
+      - coolify
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.plane.rule=Host(`${PLANE_DOMAIN}`)"
-      - "traefik.http.routers.plane.entrypoints=https"
-      - "traefik.http.routers.plane.tls=true"
-      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
-      - "traefik.http.services.plane.loadbalancer.server.port=3000"
+
+      # HTTP -> HTTPS
       - "traefik.http.routers.plane-http.rule=Host(`${PLANE_DOMAIN}`)"
       - "traefik.http.routers.plane-http.entrypoints=http"
       - "traefik.http.routers.plane-http.middlewares=plane-https-redirect"
       - "traefik.http.middlewares.plane-https-redirect.redirectscheme.scheme=https"
+
+      # HTTPS router
+      - "traefik.http.routers.plane.rule=Host(`${PLANE_DOMAIN}`)"
+      - "traefik.http.routers.plane.entrypoints=https"
+      - "traefik.http.routers.plane.tls=true"
+      - "traefik.http.routers.plane.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane.loadbalancer.server.port=80"
 
 volumes:
   plane_db:
